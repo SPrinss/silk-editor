@@ -329,13 +329,28 @@
           
           for: {
             type: String,
-            observer: '_initElementEvents'
+            observer: '_cloneElement',
+          },
+
+          editing: {
+            type: Boolean,
+            computed: '_computeEditing(selectedText, focused)',
+            reflectToAttribute: true
+          },
+
+          _originalElement: {
+            type: Object
+          },
+
+          _editableElement: {
+            type: Object
           },
           
           content: {
             type: String,
             notify: true,
-            readOnly: true
+            readOnly: true,
+            observer: '_contentChanged'
           },
 
           bold: {
@@ -518,29 +533,81 @@
         document.addEventListener('selectionchange', this._handleSelectionChange.bind(this));
       }
 
-      _initElementEvents(elementId) {
-        var element = this._getElement();
+      _cloneElement() {
+        this._originalElement = this.getRootNode().querySelector('#' + this.for);
+        var clone = this._originalElement.cloneNode(true);
+
+        var elementStyleTags = Array.from(this.getRootNode().querySelectorAll('style'));
+        for(var i in elementStyleTags) {
+          var styleClone = elementStyleTags[i].cloneNode(true);
+          window.document.body.appendChild(styleClone);
+        }
+
+        window.document.body.appendChild(clone);
+
+        this._originalElement.setAttribute('contenteditable', false);
+        this._editableElement = clone;
+
+        this._updateEditableElementPositon();
+        this._initElementEvents();
+
+      }
+
+      _updateEditableElementPositon() {
+        var originalElementPosition = this._originalElement.getBoundingClientRect();
+        console.info('originalElementPosition', originalElementPosition);
+        var editableElement = this._getElement();
+        editableElement.style.position = 'absolute';
+        editableElement.style.top = (originalElementPosition.y) + 'px';
+        editableElement.style.left = originalElementPosition.x + 'px';
+        editableElement.style.width = originalElementPosition.width + 'px';
+        editableElement.style.height = originalElementPosition.height + 'px';
+
+        this._originalElement.style.opacity = 0;
+        this._originalElement.style.pointerEvents = 'none';        
+
+      }
+
+      _initElementEvents() {
+        var editableElement = this._getElement();
         
-        element.addEventListener('focus', (function() {
+        editableElement.addEventListener('focus', (function() {
           this.focused = true;
         }).bind(this));
         
-        element.addEventListener('blur', (function() {
+        editableElement.addEventListener('blur', (function() {
           this.focused = false;
         }).bind(this));
         
-        element.addEventListener('input', (function(evt) {
+        editableElement.addEventListener('input', (function(evt) {
           this._handleInput(evt);
         }).bind(this));
 
-        element.addEventListener('change', (function(evt) {
+        editableElement.addEventListener('change', (function(evt) {
           this._handleInput(evt);
         }).bind(this));
 
-        this._observer = Polymer.dom(element).observeNodes((function() {
-          this._setContent(element.innerHTML);
+        this._observer = Polymer.dom(editableElement).observeNodes((function() {
+          this._setContent(editableElement.innerHTML);
         }).bind(this));
 
+        this._observer2 = Polymer.dom(this._originalElement).observeNodes((function() {
+          if(!this.editing) {
+            this._editableElement.innerHTML = this._originalElement.innerHTML;
+          }
+        }).bind(this));
+
+        window.addEventListener('resize', this._updateEditableElementPositon.bind(this));
+
+      }
+
+      _computeEditing(selectedText, focused) {
+        return selectedText || focused;
+      }
+
+      _contentChanged(content) {
+        this._originalElement.innerHTML = content;
+        console.info('content changed', content);
       }
 
       _stateEnabled(state) {
@@ -573,10 +640,11 @@
       }
 
       _selectedTextChanged(selectedText) {
-        if(! (this.selection && this.selection.getRangeAt) ) return;
+        var selection = this._getSelection();
+        if(! (selection && selection.getRangeAt) ) return;
         if(selectedText) {
-          var range = this.selection.getRangeAt(0);
-          this.selection.addRange(range);
+          var range = selection.getRangeAt(0);
+          selection.addRange(range);
           this._saveRange();
           this._moveFormattingBar();
           this.updateStyles();
@@ -707,9 +775,7 @@
       }
 
       _getElement() {
-        if(!this.for) return {};
-        var elem = this.getRootNode().querySelector('#' + this.for);
-        return elem;
+        return this._editableElement;
       }
 
       _linkInputFocusedChanged(linkInputFocused) {
